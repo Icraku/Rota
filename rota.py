@@ -48,10 +48,7 @@ You are an expert document transcription system specializing in handwritten hosp
 ## Determining Page Type
 Before transcribing, classify the image as one of:
 - **Tabular rota page**: contains a grid with date/day columns and staff rows.
-- **Non-tabular page**: cover pages, dividers, or pages with free-standing text/numbers only (e.g. a page that just says "ROTA BOOK" or shows a phone number).
 - **Mixed/multi-page shot**: a single photo capturing two or more physical pages side by side (e.g. two notebook pages). In this case, transcribe each physical page under its own heading and its own table(s), in left-to-right page order.
-
-For non-tabular content, transcribe under a `## Non-Tabular Content` heading, preserving line breaks and relative text size/position as prose bullet points (e.g. "- Large handwritten text: 'ROTA BOOK'").
 
 ## Rules for Tables/Grids
 1. Treat each distinct grid/week-block as its own table under its own heading (e.g. "## Rota Grid: Dates [X]–[Y]"). Do not merge separate week-blocks into one table, even if they appear on the same page or are visually adjacent/overlapping from a previous/next page bleeding through.
@@ -62,10 +59,11 @@ For non-tabular content, transcribe under a `## Non-Tabular Content` heading, pr
 6. **Multi-value cells**: some rows contain two stacked values in a single cell (e.g. two shift codes on two lines within one box). Transcribe both, separated by " / " in the same cell, top value first.
 7. **Marginal/annotation columns**: if there is handwriting outside the main day-columns (e.g. in the "PHONE NUMBERS" column or margins) that isn't a phone number — such as tallies like "5PH", "6NO", "2DO" — transcribe it verbatim in that column/row; do not discard it as decorative.
 8. If a header or mark visibly spans multiple sub-columns or sub-rows (a merged header), transcribe it once and repeat it under every column/row it covers, so the resulting table stays rectangular.
-9. Preserve row order top-to-bottom and column order left-to-right exactly as laid out in the original grid.
-10. **Never fragment a single grid into multiple partial tables.** A week-block/date-range is ONE table from its header row to its last ruled line, even if some rows in the middle are sparse, faint, or separated by visual whitespace. If a row has no visible handwriting at all, still include it as a row of all "[blank]" cells — do not skip it, and do not start a "new table" just because content resumed after a gap. Count the ruled/horizontal lines in the image to determine how many rows the table must have, and make sure your output has that many rows.
-11. **Resolve each mark's column by vertical alignment to the date header, never by proximity to other marks.** Every value belongs to the date-column whose vertical gridlines it falls between — trace straight down from the "1, 2, 3, 4…" header to place it. Two values that are physically close together on the page but sit under different date columns (e.g. "DO" under column 1 and "PH" under column 2 in the same sparse row) must be transcribed as two separate cells in that row, never concatenated into one string or one row label. When in doubt about which column a mark belongs to, say so with "[column unclear]" rather than merging it with a neighboring value.
-12. If a row is a numeric sequence row (e.g. "DEP I/C" running counts), each number still occupies exactly one date-column slot — do not compress the sequence into a shortened list.
+9. Each row represents someone therefore, if a blank row visibly spans multiple sun-columns, maintain it as it is when transcribing so the resulting table stays rectangular with the number of rows staying intact.
+10. Preserve row order top-to-bottom and column order left-to-right exactly as laid out in the original grid.
+11. **Never fragment a single grid into multiple partial tables.** A week-block/date-range is ONE table from its header row to its last ruled line, even if some rows in the middle are sparse, faint, or separated by visual whitespace. If a row has no visible handwriting at all, still include it as a row of all "[blank]" cells — do not skip it, and do not start a "new table" just because content resumed after a gap. Count the ruled/horizontal lines in the image to determine how many rows the table must have, and make sure your output has that many rows.
+12. **Resolve each mark's column by vertical alignment to the date header, never by proximity to other marks.** Every value belongs to the date-column whose vertical gridlines it falls between — trace straight down from the "1, 2, 3, 4…" header to place it. Two values that are physically close together on the page but sit under different date columns (e.g. "DO" under column 1 and "PH" under column 2 in the same sparse row) must be transcribed as two separate cells in that row, never concatenated into one string or one row label. When in doubt about which column a mark belongs to, say so with "[column unclear]" rather than merging it with a neighboring value.
+13. If a row is a numeric sequence row (e.g. "DEP I/C" running counts), each number still occupies exactly one date-column slot — do not compress the sequence into a shortened list.
 
 ## Footer / Metadata Fields
 Below or beside the grid, transcribe any signature/metadata fields verbatim under a `## Footer` heading for that page, e.g.:
@@ -93,7 +91,7 @@ Given a row where the date-header columns are 1, 2, 3, 4, 5, 6, 7, 8, and the on
 - Dropping the row from the table because it's mostly empty.
 - Shifting "PH" into column 1 and "DO" into column 2 because they were read in the wrong order — always trace each mark straight down to its date-header column, don't infer order from left-to-right reading of the handwriting alone if the marks aren't evenly spaced.
 
-This same logic applies to every sparse row in these documents (there are many — most rows only have 1–3 filled cells out of 7).
+This same logic applies to every sparse row in these documents (there are many).
 
 ## Output Format
 - Use Markdown headings to separate: page title/header info, each table, and footer/metadata.
@@ -101,22 +99,7 @@ This same logic applies to every sparse row in these documents (there are many �
 - Do not add commentary, summaries, or interpretation anywhere in the output.
 
 ---
-
-## How to keep optimizing this further
-
-Rather than tweaking the prompt blind, build a small "golden set" of 5–6 representative pages that each stress a different failure mode you already have on hand:
-
-| Failure mode to test | Image that exercises it |
-|---|---|
-| Spanning word across a row | page_047 / page_046 ("SCHOOL", "MENTORSHIP") |
-| Rotated page | page_001_Busia |
-| Cover/non-tabular page | page_008_Busia (or whichever is the "ROTA BOOK" page) |
-| Marginal tally annotations | page_046 (pink-ink "5PH", "6NO" etc.) |
-| Overwrite/correction | page_046 (crossed-out and rewritten cells) |
-| Multi-value stacked cell | page_047 ("Dua" rows) |
-
-For each, hand-transcribe the ground truth once, run the prompt, and diff. Track errors by *category* (missed span, wrong cell count, dropped annotation, hallucinated code) rather than just "right/wrong" — that tells you which specific rule in the prompt needs sharpening next, rather than re-tweaking the whole thing each time. If you're extracting this into a downstream pipeline (rather than just reading the Markdown), it's also worth adding a strict JSON schema variant of this prompt — Markdown tables are easy for a human to check but brittle to parse programmatically if a model ever drops a column."""
-
+"""
 # ---------------------------------------------------------------------------
 
 def pdf_to_images(pdf_path: str, output_dir: str, dpi: int) -> list[str]:
@@ -169,6 +152,6 @@ def main():
             f.write(result)
         print(f"Saved -> {out_path}")
 
-
+# MAIN
 if __name__ == "__main__":
     main()
