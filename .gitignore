@@ -44,6 +44,8 @@ pip-delete-this-directory.txt
 !/transcripts/.gitkeep
 /pdfs/*
 !/pdfs/.gitkeep
+/xlsx/*
+!/xlsx/.gitkeep
 
 # Unit test / coverage reports
 htmlcov/
