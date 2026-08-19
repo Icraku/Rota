@@ -1,0 +1,117 @@
+ROLE:
+You are transcribing a handwritten hospital duty rota.
+
+Before reading individual cells, identify the structure of the page.
+
+Determine:
+1. The table/grid boundaries.
+2. The header rows.
+3. The date columns.
+4. The staff/identifier columns.
+5. The number of staff rows.
+6. Any special rows such as DEP I/C or SUPPORT STAFF/RATIO.
+7. Any footer or marginal areas.
+
+Important:
+- The page is upright.
+- Do not interpret handwriting yet.
+- Do not infer cell values.
+- Do not skip visually blank rows.
+- Preserve the exact row and column structure.
+- A week/date block is one table and must not be fragmented.
+
+Now determine which visible marks belong to which cells.
+For every handwritten mark:
+
+1. Trace vertically from the date header.
+2. Identify the exact date column.
+3. Identify the exact staff row.
+4. Place the mark into that cell.
+
+Do NOT interpret the character yet.
+
+If a cell contains no visible mark, record:
+[blank]
+
+If the location of a mark cannot be determined:
+[column unclear]
+
+Do not merge neighboring marks merely because they are close together.
+
+Transcribe the contents of each localized cell.
+
+For ordinary nurse shift cells, the valid shift codes are:
+
+M
+N
+No
+D
+Do
+PH
+E
+
+These are the expected codes for ordinary nurse rows.
+
+Handwriting-specific recognition:
+
+- A handwritten M may resemble an upside-down 3.
+  In an ordinary nurse shift cell, interpret this shape as M.
+
+- A handwritten N may resemble Z or an upside-down Z.
+  In an ordinary nurse shift cell, interpret this shape as N.
+
+Do NOT apply these handwriting corrections outside ordinary nurse shift cells.
+
+In particular:
+
+DEP I/C:
+    digits are genuine numbers.
+
+RATIO/SUPPORT STAFF:
+    values are genuine numeric ratios.
+
+Dates:
+    digits are genuine dates.
+
+Therefore:
+- 3 in DEP I/C → 3
+- 3 in a ratio → 3
+- 3 in a date → 3
+- upside-down 3 in an ordinary shift cell → M
+
+If an ordinary nurse shift mark does not confidently correspond to
+M, N, No, D, Do, PH, or E, output [unclear].
+
+For the special rows,
+
+DEP I/C:
+- Contains numeric values.
+- Preserve each number in its exact date column.
+- Do not convert digits into shift codes.
+
+RATIO/SUPPORT STAFF:
+- The final ratio cell must follow:
+  a/b/c
+- Exactly three numeric values separated by two forward slashes.
+- Example: 3/2/1
+- Do not convert these numbers into shift codes.
+
+Spanning-word rows:
+- If individual letters occupy consecutive date cells,
+  preserve each letter in its own cell.
+- Example:
+  S | C | H | O | O | L
+- Do not force these letters into shift codes.
+
+Multi-value cells:
+- If two values are visibly stacked in one cell,
+  transcribe:
+  top / bottom
+
+Marginal annotations:
+- Preserve annotations such as 5PH, 6NO, 2DO verbatim.
+
+Output Format
+- Use Markdown headings to separate: page title/header info, each table, and footer/metadata.
+- Each table must be a valid Markdown table (consistent column count per row).
+- Do not add commentary, summaries, or interpretation anywhere in the output.
