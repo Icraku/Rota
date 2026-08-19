@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 PDF_DIR = BASE_DIR / "pdfs"
 IMAGES_DIR = BASE_DIR / "images"
-TRANSCRIPTS_DIR = BASE_DIR / "transcripts_base"
+TRANSCRIPTS_DIR = BASE_DIR / "transcripts"
 PROMPTS_DIR = BASE_DIR / "prompts"
 XLSX_DIR = BASE_DIR / "xlsx"
 

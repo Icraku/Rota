@@ -7,7 +7,7 @@ import fitz  # PyMuPDF
 def pdf_to_images(pdf_path: Path, output_dir: Path, dpi: int) -> list[Path]:
     """Converts every page of a PDF to a PNG, in page order.
 
-    Returns image paths in the same order as the PDF pages
+    Returns: image paths in the same order as the PDF pages
     """
     pdf_path = Path(pdf_path)
     output_dir = Path(output_dir)
