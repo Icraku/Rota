@@ -1,0 +1,35 @@
+# Header Information
+COUNTY GOVERNMENT OF KAKAMEGA
+COUNTY GENERAL HOSPITAL
+P.O. Box 15-G.P. O-50100
+KAKAMEGA
+MINISTRY OF HEALTH SERVICES
+NEW BORN UNIT ROTA FOR JANUARY 2022
+
+# Duty Rota Table
+| NO | NAMES | DATE 24 | DATE 25 | DATE 26 | DATE 27 | DATE 28 | DATE 29 | DATE 30 | PHONE NO |
+|---|---|---|---|---|---|---|---|---|---|
+| | | MON | TUE | WED | THU | FRI | SAT | SUN | |
+| 1 | I/C | E | E | E | E | E | Do | Do | [blank] |
+| 2 | DEP I/C | 16 | 17 | 18 | 19 | 20 | - | - | [blank] |
+| 3 | [blank] | M | N | E | N | M | M | E | [blank] |
+| 4 | [blank] | E | E | E | E | E | Do | Do | [blank] |
+| 5 | [blank] | E | PH | M | E | Do | Do | [blank] |
+| 6 | [blank] | 26 | 27 | 28 | 29 | 30 | N | No | [blank] |
+| 7 | [blank] | No | No | N | N | N | PH | Do | [blank] |
+| 8 | [blank] | E | M | E | E | Do | Do | E | [blank] |
+| 9 | [blank] | PH | M | E | N | E | Do | Do | [blank] |
+| 10 | [blank] | No | No | N | N | E | N | No | [blank] |
+| 11 | [blank] | PH | Do | Do | M | N | E | M | [blank] |
+| 12 | [blank] | PH | Do | No | No | No | Do | N | [blank] |
+| 13 | [blank] | Do | No | No | No | M | E | M | [blank] |
+| 14 | [blank] | N | N | No | No | N | Do | N | [blank] |
+| 15 | [blank] | M | E | E | N | M | Do | Do | [blank] |
+| 16 | I/C | E | E | E | M | E | Do | Do | [blank] |
+| 1 | [blank] | Do | Do | M | M | M | E | E | [blank] |
+| 2 | RATIO | 3/2/2 | 3/2/2 | 3/2/2 | 4/1/2 | 4/1/2 | 2/1/2 | 2/1/2 | [blank] |
+| SUPPORT STAFF | [blank] | [blank] | [blank] | [blank] | [blank] | [blank] | [blank] | [blank] | [blank] |
+
+# Footer/Metadata
+PREPARED BY: [blank] DESIGNATION: NO DATE: 19/01/22
+COUNTERSIGNED BY: [blank] DESIGNATION: SNO DATE: 20/1/22
