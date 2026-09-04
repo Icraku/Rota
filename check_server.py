@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 import config
-from llm_client import get_client, transcribe_image
+from pipeline.b_llm_client import get_client, transcribe_image
 
 
 def _get(url: str, timeout: int = 10) -> dict:

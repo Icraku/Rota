@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 
 import config
-from pdf_to_images.pdf_utils import pdf_to_images
-from llm_client import get_client, transcribe_image
-from storage import save_transcript
+from pipeline.a_pdf_utils import pdf_to_images
+from pipeline.b_llm_client import get_client, transcribe_image
+from pipeline.storage import save_transcript
 
 
 def load_prompt(prompt_path: Path) -> str:

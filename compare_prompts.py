@@ -36,8 +36,8 @@ from pathlib import Path
 import openpyxl
 
 import config
-from llm_client import get_client, transcribe_image
-from md_to_xlsx import convert_transcript, sheet_name_for
+from pipeline.b_llm_client import get_client, transcribe_image
+from pipeline.c_md_to_xlsx import convert_transcript, sheet_name_for
 
 DEFAULT_MODELS = ["qwen3.6:35b", "qwen3.5:35b", "gemma4:31b"]
 DEFAULT_PROMPTS = ["current", "currenta", "base", "base2"]
