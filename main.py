@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 import config
-from pdf_utils import pdf_to_images
+from pdf_to_images.pdf_utils import pdf_to_images
 from llm_client import get_client, transcribe_image
 from storage import save_transcript
 

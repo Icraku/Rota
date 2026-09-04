@@ -38,8 +38,8 @@ pip-delete-this-directory.txt
 
 # Pipeline data — generated images, transcripts, and source PDFs contain
 # real staff names, so keep them out of git even though the repo is private.
-/images/*
-!/images/.gitkeep
+/all_images/images/*
+!/all_images/images/.gitkeep
 /transcripts/*
 !/transcripts/.gitkeep
 /pdfs/*
