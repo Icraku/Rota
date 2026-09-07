@@ -2,15 +2,18 @@
 Rota transcription pipeline.
 
 Workflow:
-    1. Convert each page of a PDF into a PNG image (saved to images/).
-    2. Send each image, first page to last, to a vision-capable Ollama model
-       along with the active prompt (prompts/current.txt).
-    3. Save the raw Markdown transcription for each page via storage.py
-       (transcripts/ today; SurrealDB once wired up).
+    - If a PDF is given, convert every page to a PNG in images/ first.
+    - Otherwise, process whatever page_*.png files are already sitting in
+      images/ — this lets you curate exactly which pages exist (delete
+      some, add more over time) without every run silently regenerating
+      the full set from the source PDF and undoing that.
+    - Send each image, in filename order, to the vision model along with
+      the active prompt (prompts/current.txt or whichever config points at).
+    - Save the raw Markdown transcription for each page via storage.py.
 
 Usage:
-    python main.py                      # uses config.PDF_PATH
-    python main.py path/to/other.pdf    # override for a different facility/run
+    python main.py                      # process existing images/*.png as-is
+    python main.py path/to/file.pdf     # (re)generate images/ from this PDF first
 """
 import sys
 from pathlib import Path
@@ -25,7 +28,7 @@ def load_prompt(prompt_path: Path) -> str:
     return Path(prompt_path).read_text(encoding="utf-8")
 
 
-def run(pdf_path: Path = config.PDF_PATH) -> None:
+def run(pdf_path: Path | None = None) -> None:
     client = get_client(config.IP_SERVER)
     prompt = load_prompt(config.ACTIVE_PROMPT_FILE)
 
@@ -33,7 +36,15 @@ def run(pdf_path: Path = config.PDF_PATH) -> None:
     print(f"Model: {config.MODEL} @ {config.IP_SERVER}")
     print(f"Prompt: {config.ACTIVE_PROMPT_FILE.name}")
 
-    image_paths = pdf_to_images(Path(pdf_path), config.IMAGES_DIR, config.DPI)
+    if pdf_path is not None:
+        image_paths = pdf_to_images(Path(pdf_path), config.IMAGES_DIR, config.DPI)
+    else:
+        image_paths = sorted(config.IMAGES_DIR.glob("page_*.png"))
+        if not image_paths:
+            print(f"No images found in {config.IMAGES_DIR} and no PDF given.")
+            print(f"Either add page images there, or run: python main.py path/to/file.pdf")
+            return
+        print(f"Processing {len(image_paths)} existing image(s) in {config.IMAGES_DIR}")
 
     for image_path in image_paths:
         print(f"Transcribing {image_path} ...")
@@ -43,5 +54,5 @@ def run(pdf_path: Path = config.PDF_PATH) -> None:
 
 
 if __name__ == "__main__":
-    pdf_arg = Path(sys.argv[1]) if len(sys.argv) > 1 else config.PDF_PATH
+    pdf_arg = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     run(pdf_arg)
