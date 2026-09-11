@@ -1,11 +1,31 @@
 """
-Look up rota data by hospital + date, straight out of the Markdown transcripts.
+Look up rota data by hospital + date.
+
+RECOMMENDED (deterministic, no text-scanning): hospital_date_lookup(hospital,
+date) resolves `hospital` directly to its own xlsx directory —
+xlsx/<hospital>/ (see config.xlsx_dir_for) — and returns one grouped result
+per matching sheet across every workbook found there. Nothing about this
+depends on any page's transcribed text mentioning the hospital's name: since
+main.py/to_xlsx.py already save each hospital's output under its own
+subfolder (images/<hospital>/, transcripts/<model>/<hospital>/,
+xlsx/<hospital>/), every sheet found this way is trusted to belong to
+`hospital` purely because of *where* it's saved. This is what fixes the
+handful of real pages here that never state their hospital anywhere in the
+transcribed text at all (some pages never mention "Kakamega" once) — no
+amount of fuzzier text/sheet-name matching can fix a page that just doesn't
+say it, but a folder you controlled yourself always can.
+
+The lower-level, older functions below this are kept for two reasons: (1)
+backward compatibility with a workbook or transcripts folder that predates
+the per-hospital directory layout (e.g. a single flat rota_transcripts.xlsx
+with all pages as sheets, not sorted into per-hospital folders), and (2) as
+the plumbing hospital_date_lookup itself is built on.
 
 get_hospital_date_rows(hospital, date, transcripts_dir) searches every .md
-transcript for pages that (a) mention `hospital` anywhere in the page and
-(b) are stated to cover `date`'s month/year, then — within those pages —
-finds the table column whose header matches `date`'s day-of-month and pulls
-out every row's value in that column.
+transcript for pages that (a) mention `hospital` anywhere in the page or in
+the file's own path and (b) are stated to cover `date`'s month/year, then —
+within those pages — finds the table column whose header matches `date`'s
+day-of-month and pulls out every row's value in that column.
 
 hospital_date_column(...) builds on that for the common case (one clearly
 matching page): an ordered, human-readable list of {label, value} for that
@@ -14,9 +34,28 @@ any row whose data looks shifted out of place (see _flag_misaligned below).
 
 export_column_xlsx(...) writes that same column out as a small styled .xlsx.
 
+Rows come back exactly as transcribed (raw values, uninterpreted) since this
+reads the transcripts directly rather than the cleaned-up .xlsx output —
+deliberately "give me everything tied to this date" rather than a processed
+answer.
+
 get_hospital_date_rows_from_xlsx(...) / hospital_date_column_from_xlsx(...)
 do the same lookup, but against an already-built workbook (one produced by
-to_xlsx.convert_all()) instead of the raw .md files.
+to_xlsx.convert_all()) instead of the raw .md files, and still filter by
+scanning each sheet's own name/text for the hospital — this is the
+text-matching fallback hospital_date_lookup exists to avoid needing.
+
+Why the older functions search by substring instead of a hospital ID:
+nothing in this project used to assign hospitals a code — config.FACILITY
+was a plain display string ("Kakamega NBU"), and each page's own header text
+usually (not always) says which hospital it's from (e.g. "COUNTY GOVERNMENT
+OF KAKAMEGA"). config.HOSPITAL is that ID now (a short, stable tag like
+"Kakamega") — hospital_date_lookup uses it as a directory key rather than
+matching it against page text at all.
+
+This version favors plain for-loops and if/else statements over shorter
+one-liners (list comprehensions, ternary expressions) even where a
+one-liner would do the same thing, to keep each step easy to follow.
 """
 from __future__ import annotations
 
@@ -29,7 +68,8 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 
-from to_xlsx import (  # reuse the existing parser
+import config
+from pipeline.c_md_to_xlsx import (  # reuse the existing parser
     split_segments,
     parse_table_rows,
     build_header_and_data,
@@ -263,15 +303,22 @@ def get_hospital_date_rows(
 ) -> list[dict]:
     """Return every rota row tied to `hospital` + `date` across all transcripts.
 
-    hospital: case-insensitive substring matched against each transcript's
-              full text (e.g. "Kakamega" matches "COUNTY GOVERNMENT OF
-              KAKAMEGA"). Also tolerates a small typo either side (up to
-              HOSPITAL_NAME_MAX_TYPOS single-character edits), since some
-              transcripts render this as "KAKAMEA" (a dropped letter) —
-              see _hospital_mentioned.
+    hospital: case-insensitive substring matched, in order of preference,
+              against (1) the transcript file's own path — its filename
+              and any parent folder names, so a convention like naming
+              files "page_046_kakamega.md" or sorting them into a
+              "kakamega/" folder is matched directly — then (2) the
+              transcript's full text (e.g. "Kakamega" matches "COUNTY
+              GOVERNMENT OF KAKAMEGA"). Either check tolerates a small typo
+              (up to HOSPITAL_NAME_MAX_TYPOS single-character edits), since
+              some transcripts render this as "KAKAMEA" (a dropped letter)
+              — see _hospital_mentioned. The path-based check exists
+              because a handful of real pages never mention their hospital
+              anywhere in the transcribed text at all — naming the file
+              yourself is the reliable fallback for those.
     date:     a datetime.date, or an ISO string like "2022-01-10".
-    transcripts_dir: folder containing the .md transcripts to search
-                      (typically config.TRANSCRIPTS_DIR).
+    transcripts_dir: folder to search — every .md file under it, including
+                      subfolders (typically config.TRANSCRIPTS_DIR).
 
     Returns a list of dicts, one per matching row, each with:
         source_file  - which .md file this came from
@@ -285,26 +332,43 @@ def get_hospital_date_rows(
         is_ratio     - True for the RATIO/summary row, not an individual staff row
         misaligned   - True if this row's cells look shifted (see _flag_misaligned) —
                        `value` may not be trustworthy for a flagged row
+        month_stated - False if this page never states its own month/year
+                       anywhere (see _page_month_years) — its day numbers
+                       were matched with no way to confirm they're really
+                       for `date`'s month, so a row with this False could
+                       just as easily have been matched for a different
+                       month's lookup on the exact same day-of-month.
 
     A page whose month/year (parsed from its own text) doesn't match
     `date` is skipped outright, so e.g. a "10" day column on a February
-    page never gets confused with January 10th. Returns [] if nothing
-    matches — check that transcripts_dir actually holds the pages you
-    expect before assuming a real absence.
+    page never gets confused with January 10th. But a page that never
+    states a month/year at all can't be ruled out that way, so it's
+    checked anyway rather than silently skipped — that's what
+    month_stated=False on its rows is warning you about. Returns [] if
+    nothing matches — check that transcripts_dir actually holds the pages
+    you expect before assuming a real absence.
     """
     target = _as_date(date)
     transcripts_dir = Path(transcripts_dir)
     results: list[dict] = []
 
-    for md_path in sorted(transcripts_dir.glob("*.md")):
+    for md_path in sorted(transcripts_dir.rglob("*.md")):
         md_text = md_path.read_text(encoding="utf-8")
 
-        if not _hospital_mentioned(hospital, md_text):
+        # Prefer a hospital match on the file's own path (e.g. a filename
+        # ending "_kakamega.md", or living under a "kakamega/" folder) over
+        # scanning the page's transcribed text — a naming convention you
+        # control yourself is a sure thing, where text scraped by an OCR
+        # model might never have captured the hospital name at all (as
+        # happened on a few real pages here). Falls back to the page text
+        # so files that don't use that convention yet still work.
+        if not (_hospital_mentioned(hospital, str(md_path)) or _hospital_mentioned(hospital, md_text)):
             continue
 
         page_month_years = _page_month_years(md_text)
         if page_month_years and (target.month, target.year) not in page_month_years:
             continue  # this page states a month/year, and it isn't this one
+        month_stated = bool(page_month_years)
 
         table_index = -1
         for kind, lines in split_segments(md_text):
@@ -343,6 +407,7 @@ def get_hospital_date_rows(
                     "label": _row_label(header, row),
                     "is_ratio": _is_ratio_row(row),
                     "misaligned": _flag_misaligned(header, row),
+                    "month_stated": month_stated,
                 })
 
     return results
@@ -407,6 +472,13 @@ def hospital_date_column(
     entries = []
     ratio = None
     warnings = []
+    if not rows[0]["month_stated"]:
+        warnings.append(
+            f"{rows[0]['source_file']!r} never states its own month/year anywhere on the page — "
+            f"its date columns were matched with no way to confirm they're really for {date!r}. "
+            f"The same row would match just as well for the same day-of-month in a different month/year — "
+            f"verify against the source page."
+        )
     for r in rows:
         if r["is_ratio"]:
             ratio = r["value"]
@@ -702,6 +774,11 @@ def get_hospital_date_rows_from_xlsx(
         time a value is sitting in a cell here, [red]/[blank]/other tags
         have already been resolved into formatting or dropped — so that
         check is only meaningful against the raw Markdown, not the xlsx.
+      - "month_stated" is False if this sheet never states its own
+        month/year anywhere — its day numbers were matched with no way to
+        confirm they're really for `date`'s month, so the exact same row
+        could just as easily have matched a different month's lookup on
+        the same day-of-month.
 
     A sheet whose header text states a month/year that doesn't include the
     target date (see _page_month_years) is skipped outright — but a page
@@ -727,12 +804,21 @@ def get_hospital_date_rows_from_xlsx(
     for ws in workbook.worksheets:
         sheet_text = _sheet_text(ws)
 
-        if not _hospital_mentioned(hospital, sheet_text):
+        # Prefer a hospital match on the sheet's own name (e.g. a name
+        # ending "_kakamega", from a "kakamega/page_046.md" transcript —
+        # see to_xlsx.sheet_name_for) over scanning the sheet's text: a
+        # naming convention you control yourself is a sure thing, where
+        # text an OCR model produced might never mention the hospital at
+        # all (as happened on a few real pages here). Falls back to the
+        # sheet's text so sheets that don't use that convention yet still
+        # work exactly as before.
+        if not (_hospital_mentioned(hospital, ws.title) or _hospital_mentioned(hospital, sheet_text)):
             continue
 
         page_month_years = _page_month_years(sheet_text)
         if page_month_years and (target.month, target.year) not in page_month_years:
             continue  # this sheet states a month/year, and it isn't this one
+        month_stated = bool(page_month_years)
 
         blocks = _find_table_blocks_in_sheet(ws)
         table_index = -1
@@ -768,6 +854,7 @@ def get_hospital_date_rows_from_xlsx(
                         "label": _row_label_for_minitable(header, row, position),
                         "is_ratio": _is_ratio_row(row),
                         "misaligned": False,
+                        "month_stated": month_stated,
                     })
 
     return results
@@ -802,13 +889,22 @@ def hospital_date_column_from_xlsx(
             "date_column": "9 SUN",
             "entries": [{"label": "I/C", "value": "SI", "misaligned": False}, ...],
             "ratio": "3/1/2" or None,
-            "warnings": [],   # always empty here — see get_hospital_date_rows_from_xlsx
+            "warnings": [],   # see below — usually empty, but not always
           },
           {
             "source_file": "page_046A",
             ...
           },
         ]
+
+    "warnings" carries one note when the sheet itself never states a
+    month/year anywhere (get_hospital_date_rows_from_xlsx's "month_stated"
+    on its rows) — its date columns were matched with no way to confirm
+    they're really for the requested month, so the exact same sheet would
+    match just as well for the same day-of-month in a different month or
+    year. It's otherwise empty: the PHONE-NO misalignment check that
+    populates warnings for the Markdown version needs raw text the xlsx no
+    longer carries (see get_hospital_date_rows_from_xlsx).
 
     Raises ValueError only if nothing at all matches (including after the
     sheet_name filter, if given).
@@ -830,6 +926,18 @@ def hospital_date_column_from_xlsx(
             )
         raise ValueError(f"No data found for hospital={hospital!r}, date={date!r} in {xlsx_path}")
 
+    return _group_xlsx_rows_by_sheet(rows, date)
+
+
+def _group_xlsx_rows_by_sheet(rows: list[dict], date: Union[str, date_cls]) -> list[dict]:
+    """Shared grouping step behind hospital_date_column_from_xlsx and
+    hospital_date_lookup: turns a flat list of row-dicts (as returned by
+    get_hospital_date_rows_from_xlsx) into one {entries, ratio, warnings}
+    result per distinct "source_file" value, sorted by that value. Pulled
+    out on its own so both the text-matching path and the deterministic
+    directory-based path (hospital_date_lookup) produce results in exactly
+    the same shape.
+    """
     sheets_in_order = []
     for r in rows:
         if r["source_file"] not in sheets_in_order:
@@ -845,6 +953,14 @@ def hospital_date_column_from_xlsx(
 
         entries = []
         ratio = None
+        warnings = []
+        if not sheet_rows[0]["month_stated"]:
+            warnings.append(
+                f"{sheet!r} never states its own month/year anywhere on the sheet — "
+                f"its date columns were matched with no way to confirm they're really for {date!r}. "
+                f"The same sheet would match just as well for the same day-of-month in a different "
+                f"month/year — verify against the source page."
+            )
         for r in sheet_rows:
             if r["is_ratio"]:
                 ratio = r["value"]
@@ -856,32 +972,233 @@ def hospital_date_column_from_xlsx(
             "date_column": sheet_rows[0]["date_column"],
             "entries": entries,
             "ratio": ratio,
-            "warnings": [],
+            "warnings": warnings,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Deterministic, directory-based hospital resolution (recommended)
+# ---------------------------------------------------------------------------
+
+def resolve_hospital_xlsx_files(hospital: str, xlsx_dir: Path | None = None) -> list[Path]:
+    """Resolve `hospital` directly to the .xlsx workbook(s) that belong to
+    it — no scanning of page text or sheet names involved at all.
+
+    Looks for, in order:
+      1. Every *.xlsx file directly inside xlsx_dir/<hospital>/ (default
+         xlsx_dir: config.XLSX_DIR — so config.xlsx_dir_for(hospital)) — the
+         layout to_xlsx.py writes into by default. Everything found this
+         way is trusted to belong to `hospital` purely because of where
+         it's saved.
+      2. A single legacy file at xlsx_dir/<hospital>.xlsx, for a workbook
+         saved directly instead of into its own subfolder.
+
+    Raises FileNotFoundError (naming both paths it checked) if neither
+    exists, rather than silently falling back to some unrelated default
+    workbook.
+    """
+    xlsx_dir = Path(xlsx_dir) if xlsx_dir is not None else config.XLSX_DIR
+    hospital_dir = xlsx_dir / hospital
+    if hospital_dir.is_dir():
+        files = sorted(hospital_dir.glob("*.xlsx"))
+        if files:
+            return files
+
+    legacy_file = xlsx_dir / f"{hospital}.xlsx"
+    if legacy_file.exists():
+        return [legacy_file]
+
+    raise FileNotFoundError(
+        f"No xlsx found for hospital={hospital!r}. Looked for *.xlsx under "
+        f"{hospital_dir} and for a single file at {legacy_file}. Run "
+        f"`python to_xlsx.py --facility {hospital}` first, or pass an "
+        f"explicit xlsx path as lookup.py's third argument to look elsewhere."
+    )
+
+
+def hospital_date_lookup(
+    hospital: str,
+    date: Union[str, date_cls],
+    xlsx_dir: Path | None = None,
+) -> list[dict]:
+    """Recommended entry point: resolve `hospital` to its own xlsx
+    directory (see resolve_hospital_xlsx_files) and return one
+    {entries, ratio, warnings} result per matching sheet, across every
+    workbook found there — grouped and shaped exactly like
+    hospital_date_column_from_xlsx's return value.
+
+    No hospital-name text/sheet-name scanning happens here at all: every
+    sheet in every file resolve_hospital_xlsx_files finds is already known
+    to belong to `hospital`, purely by virtue of being saved under its own
+    directory. That's what makes this reliable even for the pages that
+    never mention their hospital anywhere in the transcribed text (some
+    real Kakamega pages don't) — the old text-scanning approach could never
+    fix those, no matter how fuzzy the match; a folder you named yourself
+    always can.
+
+    If more than one workbook is found in the hospital's directory (e.g.
+    output saved separately per model while comparing), each result's
+    "source_file" is prefixed with that workbook's name
+    ("rota_transcripts::page_046") to keep sheets from different files
+    distinguishable; with the normal single-workbook layout it's just the
+    plain sheet name, same as hospital_date_column_from_xlsx.
+
+    Raises FileNotFoundError if `hospital` doesn't resolve to any xlsx at
+    all (see resolve_hospital_xlsx_files), or ValueError if it resolves to
+    real file(s) but none of their sheets have a column for `date`.
+    """
+    xlsx_paths = resolve_hospital_xlsx_files(hospital, xlsx_dir)
+
+    combined_rows: list[dict] = []
+    for xlsx_path in xlsx_paths:
+        # hospital="" makes _hospital_mentioned(...) match unconditionally
+        # (an empty string is a substring of anything) — i.e. it disables
+        # the text/sheet-name filtering inside get_hospital_date_rows_from_xlsx
+        # entirely, since directory scoping above already guarantees every
+        # sheet in this file belongs to `hospital`.
+        rows = get_hospital_date_rows_from_xlsx("", date, xlsx_path)
+        if len(xlsx_paths) > 1:
+            for r in rows:
+                r["source_file"] = f"{xlsx_path.stem}::{r['source_file']}"
+        combined_rows.extend(rows)
+
+    if not combined_rows:
+        raise ValueError(
+            f"hospital={hospital!r} resolved to {[str(p) for p in xlsx_paths]}, but no "
+            f"sheet in {'it' if len(xlsx_paths) == 1 else 'them'} has a column for date={date!r}."
+        )
+
+    return _group_xlsx_rows_by_sheet(combined_rows, date)
+
+
+def resolve_hospital_transcripts_dir(hospital: str, transcripts_dir: Path | None = None) -> Path:
+    """Resolve `hospital` to its own Markdown transcripts folder — the
+    Markdown-side counterpart of resolve_hospital_xlsx_files, for looking
+    things up before to_xlsx.py has been run yet.
+
+    Default transcripts_dir is config.TRANSCRIPTS_DIR (the active model's
+    folder), so the result is config.transcripts_dir_for(hospital) unless a
+    different base folder is passed. Raises FileNotFoundError if that
+    folder doesn't exist.
+    """
+    transcripts_dir = Path(transcripts_dir) if transcripts_dir is not None else config.TRANSCRIPTS_DIR
+    hospital_dir = transcripts_dir / hospital
+    if not hospital_dir.is_dir():
+        raise FileNotFoundError(
+            f"No transcripts folder for hospital={hospital!r} at {hospital_dir}. "
+            f"Run main.py with --facility {hospital} first, or pass an explicit "
+            f"transcripts_dir to look elsewhere."
+        )
+    return hospital_dir
+
+
+def markdown_hospital_date_lookup(
+    hospital: str,
+    date: Union[str, date_cls],
+    transcripts_dir: Path | None = None,
+) -> list[dict]:
+    """Markdown-side counterpart of hospital_date_lookup: resolves
+    `hospital` directly to its own transcripts folder (see
+    resolve_hospital_transcripts_dir) and returns one
+    {entries, ratio, warnings} result per matching .md file, with no
+    hospital-name text/path scanning involved — directory scoping already
+    guarantees every file found there belongs to `hospital`.
+
+    Prefer hospital_date_lookup (the xlsx version) once to_xlsx.py has been
+    run for this hospital — it benefits from to_xlsx.py's own format-
+    tolerant parsing and the week-strip-table splitting built into the
+    xlsx-reading path. Use this one for a quick check straight off freshly
+    transcribed Markdown, before converting.
+    """
+    hospital_dir = resolve_hospital_transcripts_dir(hospital, transcripts_dir)
+
+    # hospital="" disables the (redundant, once directory-scoped) text/path
+    # filtering inside get_hospital_date_rows — see hospital_date_lookup.
+    rows = get_hospital_date_rows("", date, hospital_dir)
+    if not rows:
+        raise ValueError(
+            f"hospital={hospital!r} resolved to {hospital_dir}, but no page there "
+            f"has a column for date={date!r}."
+        )
+
+    files_in_order = []
+    for r in rows:
+        if r["source_file"] not in files_in_order:
+            files_in_order.append(r["source_file"])
+    files_in_order.sort()
+
+    results = []
+    for source_file in files_in_order:
+        file_rows = [r for r in rows if r["source_file"] == source_file]
+
+        entries = []
+        ratio = None
+        warnings = []
+        if not file_rows[0]["month_stated"]:
+            warnings.append(
+                f"{source_file!r} never states its own month/year anywhere on the page — "
+                f"its date columns were matched with no way to confirm they're really for {date!r}. "
+                f"The same row would match just as well for the same day-of-month in a different "
+                f"month/year — verify against the source page."
+            )
+        for r in file_rows:
+            if r["is_ratio"]:
+                ratio = r["value"]
+                continue
+            entries.append({"label": r["label"], "value": r["value"], "misaligned": r["misaligned"]})
+            if r["misaligned"]:
+                warnings.append(
+                    f"Row {r['label']!r} in {source_file!r}: value {r['value']!r} looks shifted out of "
+                    f"place (its PHONE NO column held a shift-code-like value) — verify against the source page."
+                )
+
+        results.append({
+            "source_file": source_file,
+            "date_column": file_rows[0]["date_column"],
+            "entries": entries,
+            "ratio": ratio,
+            "warnings": warnings,
         })
 
     return results
 
 
 if __name__ == "__main__":
-    import sys
-    import config
+    import argparse
 
-    if len(sys.argv) not in (3, 4):
-        raise SystemExit(
-            "Usage: python lookup.py <hospital substring> <YYYY-MM-DD> [prompt_name or xlsx_path]\n"
-            "  The third argument is optional.\n"
-            "  - If it ends in \".xlsx\" (e.g. an output of to_xlsx.py), that workbook\n"
-            "    is looked up directly instead of the raw Markdown transcripts.\n"
-            "  - Otherwise it's treated as a prompt_name filter — only needed if more\n"
-            "    than one prompt's output exists for the same page, e.g. \"base2\" for\n"
-            "    page_001_base2.md."
-        )
+    cli_parser = argparse.ArgumentParser(
+        description="Look up rota data by hospital + date.",
+        epilog=(
+            "Examples:\n"
+            "  python lookup.py Kakamega 2022-01-10\n"
+            "      Deterministic lookup in xlsx/Kakamega/ (recommended — see hospital_date_lookup).\n"
+            "      No page-text scanning: the hospital argument maps straight to that directory.\n"
+            "\n"
+            "  python lookup.py Kakamega 2022-01-10 --md\n"
+            "      Same, but straight off transcripts/<model>/Kakamega/*.md — useful before\n"
+            "      running to_xlsx.py yet.\n"
+            "\n"
+            "  python lookup.py Kakamega 2022-01-10 xlsx/rota_transcripts.xlsx\n"
+            "      Legacy: an explicit workbook not organized per hospital — hospital is\n"
+            "      matched by scanning each sheet's name/text instead of by directory.\n"
+            "\n"
+            "  python lookup.py Kakamega 2022-01-10 base2\n"
+            "      Legacy: raw Markdown transcripts (config.TRANSCRIPTS_DIR), hospital matched\n"
+            "      by scanning page text/paths, filtered to prompt_name \"base2\" (page_NNN_base2.md)."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    cli_parser.add_argument("hospital", help="Hospital tag, e.g. 'Kakamega' — same value passed to main.py's --facility.")
+    cli_parser.add_argument("date", help="Date to look up, YYYY-MM-DD.")
+    cli_parser.add_argument("third", nargs="?", default=None,
+                             help="Optional: an explicit .xlsx path, or a prompt_name filter for the legacy Markdown path.")
+    cli_parser.add_argument("--md", action="store_true",
+                             help="Use the deterministic Markdown-directory lookup instead of the default xlsx one.")
+    cli_args = cli_parser.parse_args()
 
-    hospital_arg, date_arg = sys.argv[1], sys.argv[2]
-    if len(sys.argv) == 4:
-        third_arg = sys.argv[3]
-    else:
-        third_arg = None
+    hospital_arg, date_arg, third_arg = cli_args.hospital, cli_args.date, cli_args.third
 
     def print_one_result(result):
         print(f"{hospital_arg} — {result['date_column']} ({date_arg})  [{result['source_file']}]")
@@ -895,26 +1212,32 @@ if __name__ == "__main__":
         for w in result["warnings"]:
             print(f"[WARNING] {w}")
 
-    if third_arg and third_arg.lower().endswith(".xlsx"):
-        try:
-            # one result per matching sheet — usually just one, but can be
-            # more while you're still comparing more than one prompt's
-            # output for the same page (see hospital_date_column_from_xlsx)
+    try:
+        if third_arg and third_arg.lower().endswith(".xlsx"):
+            # Legacy path: an explicit workbook, hospital matched by scanning
+            # sheet names/text (see hospital_date_column_from_xlsx).
             results = hospital_date_column_from_xlsx(hospital_arg, date_arg, third_arg)
-        except ValueError as e:
-            raise SystemExit(str(e))
+        elif cli_args.md:
+            if third_arg:
+                raise SystemExit(
+                    "--md looks up the hospital's whole transcripts folder directly — it "
+                    "doesn't take a prompt_name/xlsx third argument."
+                )
+            results = markdown_hospital_date_lookup(hospital_arg, date_arg)
+        elif third_arg:
+            # Legacy path: raw Markdown, hospital matched by scanning page
+            # text/paths, filtered down to one prompt's output.
+            results = [hospital_date_column(hospital_arg, date_arg, config.TRANSCRIPTS_DIR, prompt_name=third_arg)]
+        else:
+            # Recommended default: deterministic, directory-based xlsx lookup.
+            results = hospital_date_lookup(hospital_arg, date_arg)
+    except (ValueError, FileNotFoundError) as e:
+        raise SystemExit(str(e))
 
-        first = True
-        for result in results:
-            if not first:
-                print()
-            first = False
-            print(f"=== {result['source_file']} ===")
-            print_one_result(result)
-    else:
-        try:
-            result = hospital_date_column(hospital_arg, date_arg, config.TRANSCRIPTS_DIR, prompt_name=third_arg)
-        except ValueError as e:
-            raise SystemExit(str(e))
-
+    first = True
+    for result in results:
+        if not first:
+            print()
+        first = False
+        print(f"=== {result['source_file']} ===")
         print_one_result(result)

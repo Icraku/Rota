@@ -1,22 +1,28 @@
-"""
-Convert a Rota transcript (Markdown) into a styled .xlsx sheet.
+""" Convert a Rota transcript (Markdown) into a styled .xlsx sheet.
 
-Real transcript output varies a lot page to page — different column sets,
-extra header rows inserted mid-grid, footers that don't all use the same
-fields. Rather than fitting every page into one fixed template, this walks
-the markdown top to bottom and renders each chunk in place:
+Real transcript output varies a lot page to page — different column sets, extra
+header rows inserted mid-grid, footers that don't all use the same fields.
+Rather than fitting every page into one fixed template, this walks the markdown
+top to bottom and renders each chunk in place:
 
   - a pipe-table block  -> a bordered, styled table
   - anything else       -> a plain text row (heading/bullet/paragraph)
 
-Cell annotations from the transcription prompt's conventions are parsed out
-of each table cell and turned into real Excel formatting:
+Cell annotations from the transcription prompt's conventions are parsed out of
+each table cell and turned into real Excel formatting:
+
   - [red] / [blue]                    -> font color
   - [strikethrough] / [crossed out] / [cross]  -> strikethrough font
   - [blank]                           -> empty cell
   - anything else in brackets (e.g. [covered], [correction: ...],
     [signature illegible]) -> kept as the visible value if the cell would
     otherwise be empty, and always added as a cell comment
+
+This version is written to be easy to read line by line: plain for-loops
+and if/else statements are used everywhere, even in a few places where a
+shorter one-liner (a list comprehension, a ternary expression) would do
+the same thing. If you already know Python, some of this will look more
+spelled-out than it needs to be — that's on purpose.
 """
 import re
 from pathlib import Path
@@ -35,9 +41,14 @@ LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 SEP_CELL_RE = re.compile(r"^:?-+:?$")
 BRACKET_RE = re.compile(r"\[([^\[\]]+)]")
+WEEKDAY_RE = re.compile(r"^(MON|TUE|WED|THU|THUR|FRI|SAT|SUN)$", re.IGNORECASE)
+BR_TAG_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+RATIO_VALUE_RE = re.compile(r"^\d+(\s*/\s*\d+){1,3}$")
 
 STRIKE_TAGS = {"strikethrough", "crossed out", "cross", "crossed"}
 COLOR_TAGS = {"red", "blue"}
+RATIO_LABEL_WORDS = {"ratio", "support staff"}
 
 
 # ---------------------------------------------------------------------------
@@ -72,15 +83,138 @@ def split_segments(md_text: str) -> list[tuple[str, list[str]]]:
 
 
 def _is_separator_row(cells: list[str]) -> bool:
-    return bool(cells) and all(SEP_CELL_RE.fullmatch(c.strip()) for c in cells)
+    """True for a Markdown table's divider row, e.g. ['---', ':---', '---']."""
+    if not cells:
+        return False
+    for c in cells:
+        if not SEP_CELL_RE.fullmatch(c.strip()):
+            return False
+    return True
+
+
+def _pad_row(row: list[str], width: int) -> list[str]:
+    """Return a copy of row with empty strings added until it reaches width."""
+    padded = row.copy()
+    while len(padded) < width:
+        padded.append("")
+    return padded
+
+
+def normalize_cell_text(raw: str) -> str:
+    """Flatten one raw table cell's markdown formatting before anything else
+    looks at it, so header/day matching doesn't have to special-case every
+    model's formatting choices.
+
+    Different prompts/model runs write the same "date over weekday" header
+    cell in different ways, e.g. "3 MON", "3 / MON", "**3**<br>**MON**", or
+    "3<br>MON". This turns "<br>" (however it's written) into a plain space
+    and strips "**bold**" markers, so all of those come out the same:
+    "3 MON". (Bracket tags like [red] or [blank] are left alone here —
+    parse_cell handles those separately.)
+    """
+    text = BR_TAG_RE.sub(" ", raw)
+    text = BOLD_RE.sub(r"\1", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _is_blank_row(row: list[str]) -> bool:
+    """True if every cell in the row is empty (after stripping whitespace)."""
+    for c in row:
+        if c.strip():
+            return False
+    return True
+
+
+def _looks_like_ratio_values_row(row: list[str]) -> bool:
+    """True if a row is mostly bare ratio values like '3/1/2' with no label.
+
+    Some transcripts split the RATIO row in two: one row carrying the
+    "SUPPORT STAFF" / "RATIO" labels, and a separate row right after it
+    carrying just the numbers. This spots the second half of that pair so
+    the two can be merged back into one logical row (see
+    merge_split_data_rows) — otherwise the labels and the numbers end up
+    attached to the wrong table row.
+    """
+    hits = 0
+    for c in row:
+        if RATIO_VALUE_RE.match(c.strip()):
+            hits += 1
+    return hits >= 2
+
+
+def _merge_ratio_cell(a: str, b: str) -> str:
+    """Combine one column's two cell values when merging a split RATIO row.
+
+    A plain "RATIO" or "SUPPORT STAFF" label sometimes lands in the very
+    same column a real value (e.g. "3/1/2") shows up in on the row right
+    after it — the label isn't real per-column data, so it's dropped in
+    favor of the real value rather than being glued onto it. If both sides
+    are real values (or both are label words), they're joined with a space,
+    same as the header merge does.
+    """
+    a_is_label = a.lower() in RATIO_LABEL_WORDS
+    b_is_label = b.lower() in RATIO_LABEL_WORDS
+
+    if a and b:
+        if a_is_label and not b_is_label:
+            return b
+        if b_is_label and not a_is_label:
+            return a
+        if a == b:
+            return a
+        return f"{a} {b}"
+    if a:
+        return a
+    return b
+
+
+def merge_split_data_rows(data_rows: list[list[str]]) -> list[list[str]]:
+    """Merge a "labels only" row with the "values only" row right after it,
+    when a transcript has split the RATIO row across two physical table
+    rows (see _looks_like_ratio_values_row). Every other row passes through
+    unchanged.
+    """
+    merged_rows = []
+    i = 0
+    while i < len(data_rows):
+        row = data_rows[i]
+        has_next = i + 1 < len(data_rows)
+        row_has_ratio_word = False
+        for c in row:
+            if "ratio" in c.strip().lower() or "support staff" in c.strip().lower():
+                row_has_ratio_word = True
+                break
+        row_has_values = _looks_like_ratio_values_row(row)
+
+        if has_next and row_has_ratio_word and not row_has_values and _looks_like_ratio_values_row(data_rows[i + 1]):
+            next_row = data_rows[i + 1]
+            width = max(len(row), len(next_row))
+            row_a = _pad_row(row, width)
+            row_b = _pad_row(next_row, width)
+            combined = []
+            for j in range(width):
+                a = row_a[j].strip()
+                b = row_b[j].strip()
+                combined.append(_merge_ratio_cell(a, b))
+            merged_rows.append(combined)
+            i += 2
+        else:
+            merged_rows.append(row)
+            i += 1
+    return merged_rows
 
 
 def parse_table_rows(table_lines: list[str]) -> list[list[str]]:
     """Turn raw '| a | b |' lines into a rectangular list of cell strings.
 
-    Drops the markdown separator row (the '| :--- | :--- |' line) and pads
+    Drops the markdown separator row (the '| :--- | :--- |' line), drops any
+    fully-blank row(s) at the very top of the table (some transcripts render
+    a stray empty row before the real header — see _is_blank_row), and pads
     every row to the widest row so the result stays rectangular even if the
-    model produced a ragged table.
+    model produced a ragged table. Each cell also goes through
+    normalize_cell_text so "<br>" tags and "**bold**" markers don't leak
+    into header/day matching later on.
     """
     raw_rows = []
     for line in table_lines:
@@ -89,18 +223,90 @@ def parse_table_rows(table_lines: list[str]) -> list[list[str]]:
             inner = inner[1:]
         if inner.endswith("|"):
             inner = inner[:-1]
-        raw_rows.append([c.strip() for c in inner.split("|")])
+        cells = []
+        for one_cell in inner.split("|"):
+            cells.append(normalize_cell_text(one_cell))
+        raw_rows.append(cells)
 
-    rows = [r for r in raw_rows if not _is_separator_row(r)]
+    rows = []
+    for r in raw_rows:
+        if not _is_separator_row(r):
+            rows.append(r)
+
+    while rows and _is_blank_row(rows[0]):
+        rows.pop(0)
+
     if not rows:
         return []
-    max_cols = max(len(r) for r in rows)
-    return [r + [""] * (max_cols - len(r)) for r in rows]
+
+    max_cols = 0
+    for r in rows:
+        if len(r) > max_cols:
+            max_cols = len(r)
+
+    padded_rows = []
+    for r in rows:
+        padded_rows.append(_pad_row(r, max_cols))
+    return padded_rows
+
+
+def _looks_like_weekday_row(row: list[str]) -> bool:
+    """True if a row is mostly weekday abbreviations (MON, TUE, ...).
+
+    Real transcripts from this project's prompt often split the date header
+    across two physical table rows instead of combining "24" and "MON" into
+    one cell: one row of bare day numbers ('', '', '', '10', '11', ...) and,
+    right after it, a row of column labels ('NO', 'NAMES', 'DATE DAY', 'MON',
+    'TUE', ...). This detects the second row of that pair so the two can be
+    merged into one logical header — otherwise the weekday-label row gets
+    mistaken for the first row of real staff data.
+    """
+    hits = 0
+    for c in row:
+        if WEEKDAY_RE.match(c.strip()):
+            hits += 1
+    return hits >= 3
+
+
+def build_header_and_data(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """Split parsed table rows into (header, data_rows), merging a split
+    date/weekday header into one row when present (see _looks_like_weekday_row).
+
+    Falls back to the simple "first row is the header" behavior when the
+    second row doesn't look like a weekday-label row, so this is a safe
+    drop-in replacement for `rows[0], rows[1:]` either way.
+
+    Also runs the data rows through merge_split_data_rows, so a RATIO row
+    that a transcript split into a "labels" row and a "values" row comes
+    back out as a single logical row, the same way the split date/weekday
+    header does.
+    """
+    if len(rows) >= 2 and _looks_like_weekday_row(rows[1]):
+        row_a, row_b = rows[0], rows[1]
+        width = max(len(row_a), len(row_b))
+        row_a = _pad_row(row_a, width)
+        row_b = _pad_row(row_b, width)
+
+        header = []
+        for i in range(width):
+            a = row_a[i].strip()
+            b = row_b[i].strip()
+            if a and b:
+                header.append(f"{a} {b}")
+            elif a:
+                header.append(a)
+            else:
+                header.append(b)
+        return header, merge_split_data_rows(rows[2:])
+
+    return rows[0], merge_split_data_rows(rows[1:])
 
 
 def parse_cell(raw: str) -> dict:
     """Extract display value + styling from one transcript table cell."""
-    tags = [t.strip() for t in BRACKET_RE.findall(raw)]
+    tags = []
+    for t in BRACKET_RE.findall(raw):
+        tags.append(t.strip())
     text = BRACKET_RE.sub("", raw).strip()
 
     bold = False
@@ -108,12 +314,24 @@ def parse_cell(raw: str) -> dict:
         text = text[2:-2].strip()
         bold = True
 
-    tags_lower = [t.lower() for t in tags]
+    tags_lower = []
+    for t in tags:
+        tags_lower.append(t.lower())
+
     is_red = "red" in tags_lower
     is_blue = "blue" in tags_lower
     is_blank = "blank" in tags_lower
-    is_strike = any(t in STRIKE_TAGS for t in tags_lower)
-    comment_tags = [t for t in tags if t.lower() not in ("red", "blue", "blank")]
+
+    is_strike = False
+    for t in tags_lower:
+        if t in STRIKE_TAGS:
+            is_strike = True
+            break
+
+    comment_tags = []
+    for t in tags:
+        if t.lower() not in ("red", "blue", "blank"):
+            comment_tags.append(t)
 
     if text:
         value = text
@@ -124,13 +342,18 @@ def parse_cell(raw: str) -> dict:
     else:
         value = ""
 
+    if comment_tags:
+        comment = "; ".join(comment_tags)
+    else:
+        comment = None
+
     return {
         "value": value,
         "bold": bold,
         "red": is_red,
         "blue": is_blue,
         "strike": is_strike,
-        "comment": "; ".join(comment_tags) if comment_tags else None,
+        "comment": comment,
     }
 
 
@@ -164,7 +387,12 @@ def parse_text_line(line: str) -> dict:
     if text in ("---", ""):
         return {"value": "", "bold": False, "italic": False}
 
-    return {"value": ("• " if bullet else "") + text, "bold": bold, "italic": italic}
+    if bullet:
+        prefix = "• "
+    else:
+        prefix = ""
+
+    return {"value": prefix + text, "bold": bold, "italic": italic}
 
 
 # ---------------------------------------------------------------------------
@@ -172,16 +400,21 @@ def parse_text_line(line: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _font(bold=False, italic=False, red=False, blue=False, strike=False):
-    color = "FF0000" if red else ("0000FF" if blue else "000000")
+    if red:
+        color = "FF0000"
+    elif blue:
+        color = "0000FF"
+    else:
+        color = "000000"
     return Font(name=FONT_NAME, bold=bold, italic=italic, color=color, strike=strike)
 
 
-def render_table(ws, start_row: int, rows: list[list[str]]) -> int:
-    """Write one table starting at start_row. Returns the next free row."""
+def render_table(ws, start_row: int, rows: list[list[str]]) -> tuple[int, int]:
+    """Write one table starting at start_row. Returns (next_free_row, ncols)."""
     if not rows:
-        return start_row
+        return start_row, 0
 
-    header, data_rows = rows[0], rows[1:]
+    header, data_rows = build_header_and_data(rows)
     ncols = len(header)
 
     for j, raw in enumerate(header, start=1):
@@ -230,8 +463,8 @@ def convert_transcript(md_path: Path, ws) -> None:
     for kind, lines in segments:
         if kind == "table":
             rows = parse_table_rows(lines)
-            if rows:
-                max_cols = max(max_cols, len(rows[0]))
+            if rows and len(rows[0]) > max_cols:
+                max_cols = len(rows[0])
 
     row = 1
     for kind, lines in segments:
@@ -247,22 +480,49 @@ def convert_transcript(md_path: Path, ws) -> None:
         ws.column_dimensions[get_column_letter(col)].width = 14
 
 
-def sheet_name_for(md_path: Path) -> str:
-    name = Path(md_path).stem
-    return re.sub(r"[\[\]:*?/\\]", "_", name)[:31]
+def sheet_name_for(md_path: Path, transcripts_dir: Path | None = None) -> str:
+    """Build this page's sheet title from its .md filename.
+
+    If the file lives in a subfolder of transcripts_dir (e.g. organizing
+    transcripts one folder per hospital, like "kakamega/page_046.md"), the
+    folder name is folded into the title too ("kakamega_page_046") so that
+    information isn't silently lost once everything becomes flat sheet
+    names in one workbook — lookup.py's hospital matching can then find it
+    in the sheet name itself, not just the page's own transcribed text.
+    """
+    md_path = Path(md_path)
+    name = md_path.stem
+
+    if transcripts_dir is not None:
+        transcripts_dir = Path(transcripts_dir)
+        try:
+            relative = md_path.relative_to(transcripts_dir)
+        except ValueError:
+            relative = None
+        if relative is not None and len(relative.parts) > 1:
+            folder_parts = relative.parts[:-1]
+            name = "_".join(folder_parts) + "_" + name
+
+    cleaned = re.sub(r"[\[\]:*?/\\]", "_", name)
+    return cleaned[:31]  # Excel sheet names can't be longer than 31 characters
 
 
 def convert_all(transcripts_dir: Path, output_path: Path) -> Path:
-    """Convert every .md file in transcripts_dir into one workbook, one sheet per page."""
+    """Convert every .md file in transcripts_dir into one workbook, one
+    sheet per page. Looks inside subfolders too (not just transcripts_dir
+    itself), so organizing transcripts one folder per hospital works —
+    see sheet_name_for for how a subfolder's name carries into the sheet
+    title.
+    """
     transcripts_dir = Path(transcripts_dir)
-    md_files = sorted(transcripts_dir.glob("*.md"))
+    md_files = sorted(transcripts_dir.rglob("*.md"))
     if not md_files:
         raise FileNotFoundError(f"No .md files found in {transcripts_dir}")
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # drop the default blank sheet
     for md_path in md_files:
-        ws = wb.create_sheet(title=sheet_name_for(md_path))
+        ws = wb.create_sheet(title=sheet_name_for(md_path, transcripts_dir))
         convert_transcript(md_path, ws)
         print(f"Converted {md_path.name} -> sheet '{ws.title}'")
 
@@ -272,10 +532,10 @@ def convert_all(transcripts_dir: Path, output_path: Path) -> Path:
     return output_path
 
 
-if __name__ == "__main__":
-    import sys
-    import config
 
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else config.XLSX_DIR / "rota_transcripts.xlsx"
-    convert_all(config.TRANSCRIPTS_DIR, out)
-    print(f"Saved -> {out}")
+# This module is a pure library — no config/CLI coupling here on purpose, so
+# it can be imported the same way by main.py's pipeline, compare_prompts.py,
+# lookup.py, and the root-level to_xlsx.py CLI wrapper without any of them
+# fighting over what "the" default paths are. Run `python to_xlsx.py` (root)
+# to convert one hospital's transcripts into its xlsx workbook from the
+# command line.
