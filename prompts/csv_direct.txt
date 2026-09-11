@@ -1,5 +1,4 @@
-ROLE:
-You are transcribing a handwritten hospital duty rota.
+ROLE: You are transcribing a handwritten hospital duty rota.
 
 Before reading individual cells, identify the structure of the page.
 
@@ -20,8 +19,7 @@ Important:
 - Preserve the exact row and column structure.
 - A week/date block is one table and must not be fragmented.
 
-Now determine which visible marks belong to which cells.
-For every handwritten mark:
+Now determine which visible marks belong to which cells. For every handwritten mark:
 
 1. Trace vertically from the date header.
 2. Identify the exact date column.
@@ -30,11 +28,8 @@ For every handwritten mark:
 
 Do NOT interpret the character yet.
 
-If a cell contains no visible mark, record:
-[blank]
-
-If the location of a mark cannot be determined:
-[column unclear]
+If a cell contains no visible mark, record: [blank]
+If the location of a mark cannot be determined: [column unclear]
 
 Do not merge neighboring marks merely because they are close together.
 
@@ -56,7 +51,6 @@ Handwriting-specific recognition:
 
 - A handwritten M may resemble an upside-down 3.
   In an ordinary nurse shift cell, interpret this shape as M.
-
 - A handwritten N may resemble Z or an upside-down Z.
   In an ordinary nurse shift cell, interpret this shape as N.
 
@@ -64,11 +58,9 @@ Do NOT apply these handwriting corrections outside ordinary nurse shift cells.
 
 In particular:
 
-Dates:
-    digits are genuine dates.
+Dates: digits are genuine dates.
 
-If an ordinary nurse shift mark does not confidently correspond to
-M, N, No, D, Do, PH, or E, output [unclear].
+If an ordinary nurse shift mark does not confidently correspond to M, N, No, D, Do, PH, or E, output [unclear].
 
 For the special rows,
 
@@ -77,29 +69,28 @@ DEP I/C:
 - Do not convert digits into shift codes or vice versa.
 
 RATIO:
-- The final ratio cell must follow:
-  a/b/c
+- The final ratio cell must follow: a/b/c
 - Exactly three numeric values separated by two forward slashes.
 - The values are genuine numeric ratios of the sum of evening shift (E) / sum of afternoon shift (M) / sum of night shift (N).
-- Example: 3/2/1 in a ratio cell → 3 counts of E/2 counts of M/1 count of N in that column.
+- Example: 3/2/1 in a ratio cell -> 3 counts of E/2 counts of M/1 count of N in that column.
 - Do not convert these numbers into shift codes.
 
 Spanning-word rows:
-- If individual letters occupy consecutive date cells,
-  preserve each letter in its own cell.
-- Example:
-  S | C | H | O | O | L
+- If individual letters occupy consecutive date cells, preserve each letter in its own cell.
+- Example: S | C | H | O | O | L
 - Do not force these letters into shift codes.
 
 Multi-value cells:
-- If two values are visibly stacked in one cell,
-  transcribe:
-  top / bottom
+- If two values are visibly stacked in one cell, transcribe: top / bottom
 
 Marginal annotations:
 - Preserve annotations such as 5PH, 6NO, 2DO verbatim.
 
 Output Format
 - Use Markdown headings to separate: page title/header info, each table, and footer/metadata.
-- Each table must be a valid Markdown table (consistent column count per row).
-- Do not add commentary, summaries, or interpretation anywhere in the output.
+- Each table must be a valid Markdown table (consistent column count per row, including a
+  "| :--- | :--- | ... |" separator row directly under the header row).
+- Every row of a table, including the separator row, must start and end with "|".
+- Do not wrap tables in code fences (no ``` blocks) — output raw Markdown only.
+- Do not add commentary, summaries, explanations, or interpretation anywhere in the output —
+  the response must contain only the headings and the tables themselves.

@@ -95,7 +95,7 @@ def transcribe_image(
             f"Nothing was received at all — that points at the server/connection, not just slow "
             f"generation. Check the server directly (ollama ps, ollama logs, nvidia-smi on that "
             f"machine) rather than waiting longer."
-        ) from e
+        )(e)
 
     if show_progress:
         print()

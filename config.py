@@ -15,8 +15,10 @@ FACILITY = "Kakamega NBU"
 # ---------------------------------------------------------------------------
 # Model / server
 # ---------------------------------------------------------------------------
-IP_SERVER = os.getenv("IP_SERVER", "http://172.16.13.68:11434")
+IP_SERVER = os.getenv("IP_SERVER", "172.16.13.68:11434")
+IP_LOCAL = os.getenv("IP_LOCAL", "http://127.0.0.1:11434")
 MODEL = os.getenv("ROTA_MODEL", "qwen3.6:35b")
+MODEL2 = os.getenv("ROTA_MODEL", "qwen3-vl:4b")
 
 
 def _transcripts_dir_name(model: str) -> str:
@@ -50,7 +52,7 @@ XLSX_DIR = BASE_DIR / "xlsx"
 
 # Override per-run: `python main.py path/to/other.pdf`
 PDF_PATH = PDF_DIR / "Kakamega_NBU_Rota_2022.pdf"
-ACTIVE_PROMPT_FILE = PROMPTS_DIR / "base.txt"
+ACTIVE_PROMPT_FILE = PROMPTS_DIR / "csv_direct.txt"
 
 DPI = 200  # increase for dense/handwritten pages
 
