@@ -14,31 +14,9 @@ any row whose data looks shifted out of place (see _flag_misaligned below).
 
 export_column_xlsx(...) writes that same column out as a small styled .xlsx.
 
-Rows come back exactly as transcribed (raw values, uninterpreted) since this
-reads the transcripts directly rather than the cleaned-up .xlsx output —
-deliberately "give me everything tied to this date" rather than a processed
-answer.
-
 get_hospital_date_rows_from_xlsx(...) / hospital_date_column_from_xlsx(...)
 do the same lookup, but against an already-built workbook (one produced by
-to_xlsx.convert_all()) instead of the raw .md files. Use these once the
-Markdown transcripts have been converted: since to_xlsx.py already ran every
-table through the same format-tolerant parsing (merged split headers and
-RATIO rows, [red]/[blank]/<br>/** noise turned into real Excel formatting or
-dropped), every sheet in the workbook is in one consistent shape no matter
-which prompt/model-format produced the original page — so looking things up
-there is simpler and a bit cleaner than re-parsing Markdown each time.
-
-Why search-by-substring instead of a hospital ID: nothing in this project
-currently assigns hospitals a code — config.FACILITY is a plain string
-("Kakamega NBU"), and each page's own header text says which hospital it's
-from (e.g. "COUNTY GOVERNMENT OF KAKAMEGA"). Matching that text directly
-means this works today, across however many hospitals' transcripts end up
-sharing a transcripts folder, without inventing an ID scheme first.
-
-This version favors plain for-loops and if/else statements over shorter
-one-liners (list comprehensions, ternary expressions) even where a
-one-liner would do the same thing, to keep each step easy to follow.
+to_xlsx.convert_all()) instead of the raw .md files.
 """
 from __future__ import annotations
 
@@ -51,16 +29,35 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.comments import Comment
 
-from to_xlsx import split_segments, parse_table_rows, build_header_and_data  # reuse the existing parser
+from to_xlsx import (  # reuse the existing parser
+    split_segments,
+    parse_table_rows,
+    build_header_and_data,
+    RATIO_VALUE_RE,
+)
 
+# Full month names and common abbreviations ("Jan", "Sept"/"Sep", ...) — real
+# transcripts write this every which way ("JANUARY 2022", "JAN 2022", "Jan.
+# 2022"), so both are accepted.
 MONTH_YEAR_RE = re.compile(
-    r"(January|February|March|April|May|June|July|August|September|October|November|December)"
+    r"\b(January|February|March|April|May|June|July|August|September|October|November|December"
+    r"|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\b\.?"
     r"\s+(\d{4})",
     re.IGNORECASE,
 )
 MONTHS = {
-    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
-    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "january": 1, "jan": 1,
+    "february": 2, "feb": 2,
+    "march": 3, "mar": 3,
+    "april": 4, "apr": 4,
+    "may": 5,
+    "june": 6, "jun": 6,
+    "july": 7, "jul": 7,
+    "august": 8, "aug": 8,
+    "september": 9, "sept": 9, "sep": 9,
+    "october": 10, "oct": 10,
+    "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
 }
 LEADING_DAY_RE = re.compile(r"^\D*(\d{1,2})\b")
 
@@ -152,17 +149,28 @@ def _hospital_mentioned(hospital: str, md_text: str) -> bool:
     return False
 
 
-def _page_month_year(md_text: str) -> tuple[int, int] | None:
-    """Pull (month, year) from anywhere on the page, e.g. '...ROTA FOR JANUARY 2022'.
+def _page_month_years(md_text: str) -> list[tuple[int, int]]:
+    """Pull every (month, year) pair stated anywhere on the page, e.g.
+    '...ROTA FOR JANUARY 2022' -> [(1, 2022)].
 
-    Returns None if the page doesn't state a month/year anywhere — in that
-    case the caller treats it as "can't rule this page out" and checks its
-    date columns anyway, rather than silently skipping it.
+    Some real transcripts cover a rota that spans a month boundary and say
+    so right in the heading, e.g. "...ROTA FOR DECEMBER 2021/ JANUARY
+    2022" — that page is legitimately for BOTH months, so this returns
+    every month/year mention found rather than just the first one. Only
+    checking the first would wrongly rule the page out for the second
+    month's dates (e.g. skip it for a January 1st lookup just because
+    "December 2021" happened to appear first in the text).
+
+    Returns an empty list if the page doesn't state a month/year anywhere
+    — in that case the caller treats it as "can't rule this page out" and
+    checks its date columns anyway, rather than silently skipping it.
     """
-    m = MONTH_YEAR_RE.search(md_text)
-    if not m:
-        return None
-    return MONTHS[m.group(1).lower()], int(m.group(2))
+    pairs = []
+    for m in MONTH_YEAR_RE.finditer(md_text):
+        pair = (MONTHS[m.group(1).lower()], int(m.group(2)))
+        if pair not in pairs:
+            pairs.append(pair)
+    return pairs
 
 
 def _matching_day_column(header: list[str], day: int) -> int | None:
@@ -294,9 +302,9 @@ def get_hospital_date_rows(
         if not _hospital_mentioned(hospital, md_text):
             continue
 
-        page_month_year = _page_month_year(md_text)
-        if page_month_year is not None and page_month_year != (target.month, target.year):
-            continue  # this page is a different month/year — its day numbers don't apply
+        page_month_years = _page_month_years(md_text)
+        if page_month_years and (target.month, target.year) not in page_month_years:
+            continue  # this page states a month/year, and it isn't this one
 
         table_index = -1
         for kind, lines in split_segments(md_text):
@@ -571,6 +579,106 @@ def _find_table_blocks_in_sheet(ws) -> list[list[list[str]]]:
     return blocks
 
 
+def _looks_like_day_header_row(row: list[str], min_hits: int = 3) -> bool:
+    """True if a row looks like a table's "date numbers" row — at least
+    min_hits of its cells start with a short (1-2 digit) number, e.g. a
+    plain ['27', '28', '29', ...] row, a combined ['27 MON', '28 TUE', ...]
+    row, or a "continued" one like ['32', '33', '34', ...] some transcripts
+    use to keep counting past the end of a month instead of resetting to 1.
+
+    A ratio-style value like "2/2/2" or "3/1 /2" also starts with a digit,
+    but isn't a date — RATIO_VALUE_RE filters those out first so a RATIO
+    row full of such values is never mistaken for a header.
+
+    min_hits defaults to 3 for the general case: a data row can, by pure
+    coincidence, contain a couple of cells that start with a number (e.g.
+    a NO column, or an odd transcribed value), so requiring several in the
+    same row is what keeps this from false-triggering on those. Pass a
+    lower min_hits (see _split_block_into_minitables) when checking a
+    table's very first row specifically — there a table can legitimately
+    only span 1 or 2 date columns, and being row 0 of a freshly-started
+    table already makes "this is the header" a safe bet on its own.
+    """
+    hits = 0
+    for c in row:
+        text = c.strip()
+        if not text or RATIO_VALUE_RE.match(text):
+            continue
+        if LEADING_DAY_RE.match(text):
+            hits += 1
+    return hits >= min_hits
+
+
+def _split_block_into_minitables(block: list[list[str]]) -> list[tuple[list[str], list[list[str]]]]:
+    """Split one bordered table block into one or more (header, data_rows)
+    mini-tables, by finding every row inside it that looks like a date
+    numbers row (see _looks_like_day_header_row) and treating everything up
+    to the next one — or the end of the block — as that mini-table's data.
+
+    Most tables only have one such row, right at the top, in the usual
+    "NO | NAMES | DATE DAY | 27 MON | 28 TUE | ..." layout — to_xlsx.py's
+    own two-row-header merge already combined a split date/weekday header
+    into one row like that before this workbook was even written. When
+    block[0] already looks like a date-numbers row, it's trusted as THE
+    header and nothing past it is re-examined: a staff data row can, purely
+    by coincidence, also contain 3+ cells that look like a short ascending
+    run of numbers (e.g. a row transcribed as ['4', '', '16', '17', '18',
+    '19', '20', '-', '-']), and re-scanning the rest of an already-correct
+    table for "more headers" risks mistaking a row like that for a second
+    one and cutting the real header off from most of its own data.
+
+    Only when block[0] does NOT look like a date-numbers row — because the
+    transcript restated the date numbers somewhere else instead (e.g. a
+    weekday-letters row like "M T W T F S S" comes first, or a whole month
+    got broken into several narrower "week strip" tables stacked in this
+    same bordered block, each with its own date-numbers row) — does this
+    fall back to scanning every row in the block for one. That's a looser,
+    less certain search (the same coincidental false-positive is possible
+    here too), but it's the only way to find a header that isn't at the
+    top, and these tables have nothing usable without it anyway.
+    """
+    if not block:
+        return []
+
+    if _looks_like_day_header_row(block[0], min_hits=1):
+        return [(block[0], block[1:])]
+
+    header_positions = []
+    for i, row in enumerate(block):
+        if _looks_like_day_header_row(row):
+            header_positions.append(i)
+
+    if not header_positions:
+        return []
+
+    minitables = []
+    for k in range(len(header_positions)):
+        start = header_positions[k]
+        if k + 1 < len(header_positions):
+            end = header_positions[k + 1]
+        else:
+            end = len(block)
+        header = block[start]
+        data_rows = block[start + 1:end]
+        minitables.append((header, data_rows))
+    return minitables
+
+
+def _row_label_for_minitable(header: list[str], row: list[str], position: int) -> str:
+    """Like _row_label, but for a mini-table found by
+    _split_block_into_minitables: some of those have no NO/NAMES/
+    designation columns at all — every column is a date column, because
+    the transcript split a month into narrow date-only "week strip" tables
+    with nothing identifying each row. There's nothing meaningful to read
+    out of row[0] in that case (it's a real shift-code value, not an ID),
+    so this falls back to the row's plain position instead of misreading
+    it as if it were a staff number.
+    """
+    if header and LEADING_DAY_RE.match(header[0].strip()):
+        return f"Row {position}"
+    return _row_label(header, row)
+
+
 def get_hospital_date_rows_from_xlsx(
     hospital: str,
     date: Union[str, date_cls],
@@ -585,11 +693,31 @@ def get_hospital_date_rows_from_xlsx(
     Returns the same list-of-dicts shape as get_hospital_date_rows, except:
       - "source_file" holds the sheet name (e.g. "page_001_base2") instead
         of a .md filename.
+      - "label" falls back to a plain "Row <n>" position when a sheet has
+        split its month into date-only "week strip" tables with no NO/
+        NAMES/designation columns at all (see _row_label_for_minitable) —
+        there's nothing else in the row to identify it by.
       - "misaligned" is always False. The PHONE-NO-column heuristic that
         flags a shifted row needs the row's original raw text, and by the
         time a value is sitting in a cell here, [red]/[blank]/other tags
         have already been resolved into formatting or dropped — so that
         check is only meaningful against the raw Markdown, not the xlsx.
+
+    A sheet whose header text states a month/year that doesn't include the
+    target date (see _page_month_years) is skipped outright — but a page
+    covering more than one month (e.g. "...ROTA FOR DECEMBER 2021/ JANUARY
+    2022") is checked against every month it mentions, not just the first.
+
+    Some real transcripts split a whole month into several narrow "week
+    strip" tables stacked down a sheet, each restating its own date-numbers
+    row (see _split_block_into_minitables) — those are matched
+    independently, so a date can come from whichever week strip actually
+    has that date's column. A week whose date-numbers row is missing,
+    blank, or written only as "continued" numbering past the end of the
+    previous month (e.g. "32", "33", ... instead of resetting to "1", "2")
+    simply won't have a column that matches an ordinary day-of-month
+    lookup — that's a real gap in what the transcript recorded, not
+    something this can safely guess its way around.
     """
     target = _as_date(date)
     xlsx_path = Path(xlsx_path)
@@ -602,45 +730,45 @@ def get_hospital_date_rows_from_xlsx(
         if not _hospital_mentioned(hospital, sheet_text):
             continue
 
-        page_month_year = _page_month_year(sheet_text)
-        if page_month_year is not None and page_month_year != (target.month, target.year):
-            continue  # this sheet is a different month/year — its day numbers don't apply
+        page_month_years = _page_month_years(sheet_text)
+        if page_month_years and (target.month, target.year) not in page_month_years:
+            continue  # this sheet states a month/year, and it isn't this one
 
         blocks = _find_table_blocks_in_sheet(ws)
-        for table_index, block in enumerate(blocks):
-            if len(block) < 2:
-                continue  # a table needs at least a header row and one data row
+        table_index = -1
+        for block in blocks:
+            for header, data_rows in _split_block_into_minitables(block):
+                table_index += 1
 
-            header = block[0]
-            data_rows = block[1:]
-
-            col = _matching_day_column(header, target.day)
-            if col is None:
-                continue
-
-            for row in data_rows:
-                has_any_content = False
-                for c in row:
-                    if c.strip():
-                        has_any_content = True
-                        break
-                if not has_any_content:
-                    continue  # a fully blank filler row — not real data
-
-                if col >= len(row):
+                col = _matching_day_column(header, target.day)
+                if col is None:
                     continue
 
-                results.append({
-                    "source_file": ws.title,
-                    "table_index": table_index,
-                    "header": header,
-                    "row": row,
-                    "date_column": header[col],
-                    "value": row[col],
-                    "label": _row_label(header, row),
-                    "is_ratio": _is_ratio_row(row),
-                    "misaligned": False,
-                })
+                position = 0
+                for row in data_rows:
+                    has_any_content = False
+                    for c in row:
+                        if c.strip():
+                            has_any_content = True
+                            break
+                    if not has_any_content:
+                        continue  # a fully blank filler row — not real data
+
+                    position += 1
+                    if col >= len(row):
+                        continue
+
+                    results.append({
+                        "source_file": ws.title,
+                        "table_index": table_index,
+                        "header": header,
+                        "row": row,
+                        "date_column": header[col],
+                        "value": row[col],
+                        "label": _row_label_for_minitable(header, row, position),
+                        "is_ratio": _is_ratio_row(row),
+                        "misaligned": False,
+                    })
 
     return results
 
