@@ -1,9 +1,9 @@
 """
-Look up E/M/N/total shift-code counts by hospital + date
+Look up E/M/N/total shift-code counts by hospital + date in the ground_truth data.
 
 Usage as a script (mirrors lookup.py's hospital/date/path CLI shape):
-    python eval_counts.py Kakamega 2022-01-10 ROTA_NBU_Nov_2024.xlsx
-    python eval_counts.py Kakamega 2022-01-10 ROTA_NBU_Nov_2024.xlsx --sheet in
+    python ground_truth_lookup.py Kakamega 2022-01-10 ROTA_NBU_Nov_2024.xlsx
+    python ground_truth_lookup.py Kakamega 2022-01-10 ROTA_NBU_Nov_2024.xlsx --sheet in
 """
 from __future__ import annotations
 
@@ -18,7 +18,14 @@ from openpyxl.utils import column_index_from_string
 
 from lookup import _as_date  # reuse the same "ISO string or date" acceptance lookup.py uses
 
-METRICS = ("E-Evening: ", "M-Afternoon: ", "N-Night: ", "Total nurses: ")
+METRICS = ("E", "M", "N", "total")
+
+METRIC_LABELS = {
+    "E": "E - Evening",
+    "M": "M - Afternoon",
+    "N": "N - Night",
+    "total": "Total nurses",
+}
 
 
 @dataclass
@@ -68,10 +75,10 @@ def load_ground_truth(
     table = pd.DataFrame({
         "hospital": df[_column_name_at(df, columns.hospital)],
         "date": pd.to_datetime(df[_column_name_at(df, columns.date)], errors="coerce"),
-        "E-Evening: ": df[_column_name_at(df, columns.E)],
-        "M-Afternoon: ": df[_column_name_at(df, columns.M)],
-        "N-Night: ": df[_column_name_at(df, columns.N)],
-        "Total nurses: ": df[_column_name_at(df, columns.total)],
+        "E": df[_column_name_at(df, columns.E)],
+        "M": df[_column_name_at(df, columns.M)],
+        "N": df[_column_name_at(df, columns.N)],
+        "total": df[_column_name_at(df, columns.total)],
     })
 
     # Step 3: keep only rows for this hospital (case-insensitive, exact
@@ -82,16 +89,16 @@ def load_ground_truth(
     table = table[is_this_hospital]
 
     # Step 4: blank count cells (NaN) mean "0 of that shift", not "unknown".
-    table[["E-Evening: ", "M-Afternoon: ", "N-Night: ", "Total nurses: "]] = table[["E-Evening: ", "M-Afternoon: ", "N-Night: ", "Total nurses: "]].fillna(0).astype(int)
+    table[["E", "M", "N", "total"]] = table[["E", "M", "N", "total"]].fillna(0).astype(int)
 
     # Step 5: turn the table into {date: {"E": n, "M": n, "N": n, "total": n}}.
     result: dict[date_cls, dict[str, int]] = {}
     for _, row in table.iterrows():
         result[row["date"].date()] = {
-            "E-Evening: ": int(row["E-Evening: "]),
-            "M-Afternoon: ": int(row["M-Afternoon: "]),
-            "N-Night: ": int(row["N-Night: "]),
-            "Total nurses: ": int(row["Total nurses: "]),
+            "E": int(row["E"]),
+            "M": int(row["M"]),
+            "N": int(row["N"]),
+            "total": int(row["total"]),
         }
     return result
 
@@ -142,5 +149,4 @@ if __name__ == "__main__":
 
     print(f"{args.hospital} — {args.date}  [ground truth: {args.ground_truth.name}]")
     for metric in METRICS:
-        label = "Total nurses" if metric == "Total nurses" else metric
-        print(f"  {label:<10} {counts[metric]}")
+        print(f"  {METRIC_LABELS[metric]:<14} {counts[metric]}")

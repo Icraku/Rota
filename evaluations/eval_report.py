@@ -1,7 +1,7 @@
 """
-Write eval_counts.evaluate()'s results out as a styled, formula-driven .xlsx
-report. Kept separate from eval_counts.py so that module stays pure
-computation with no openpyxl-rendering concerns mixed in.
+Write compare_counts.evaluate()'s results out as a styled, formula-driven
+.xlsx report. Kept separate from compare_counts.py so that module stays
+pure computation with no openpyxl-rendering concerns mixed in.
 
 Every "match" cell is a real formula comparing the ground-truth cell to the
 predicted cell in the same row (not a value computed in Python and pasted
@@ -17,7 +17,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
-from eval_counts import METRICS, DateResult
+from compare_counts import METRICS, DateResult
 
 FONT_NAME = "Arial"
 HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")

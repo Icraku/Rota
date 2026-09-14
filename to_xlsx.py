@@ -3,7 +3,7 @@ CLI: convert one hospital's Markdown transcripts into its xlsx workbook.
 
 All the actual parsing/rendering logic lives in pipeline/c_md_to_xlsx.py —
 this is just the command-line entry point, plus a re-export of the parsing
-helpers so other scripts (lookup.py, older tools) can keep doing
+helpers so other scripts (lookup.py, older evaluations) can keep doing
 `from to_xlsx import split_segments, ...` without caring that the
 implementation lives under pipeline/.
 
