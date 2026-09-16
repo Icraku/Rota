@@ -62,7 +62,7 @@ XLSX_DIR = BASE_DIR / "xlsx"
 
 # Override per-run: `python main.py path/to/other.pdf` or `python main.py --pdf ...`
 PDF_PATH = PDF_DIR / "Kakamega_NBU_Rota_2022.pdf"
-ACTIVE_PROMPT_FILE = PROMPTS_DIR / "csv_direct.txt"
+ACTIVE_PROMPT_FILE = PROMPTS_DIR / "new1.txt"
 
 DPI = 200  # increase for dense/handwritten pages
 

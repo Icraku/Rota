@@ -27,6 +27,8 @@ from openpyxl.comments import Comment
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+
+
 import config
 from pipeline.c_md_to_xlsx import (
     split_segments,
@@ -75,6 +77,7 @@ THIN = Side(style="thin", color="999999")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
+DEFAULT_XLSX_PATH = config.XLSX_DIR / "rota_transcripts.xlsx"
 
 # ---------------------------------------------------------------------------
 # Small building blocks used by everything else in this file
@@ -969,12 +972,31 @@ if __name__ == "__main__":
 
     hospital_arg, date_arg, third_arg = cli_args.hospital, cli_args.date, cli_args.third
 
+
+    def count_metrics_one(result):
+        """Tally E/M/N codes and total non-blank entries for ONE result
+        block (one sheet/file)
+        """
+        counts = {"E": 0, "M": 0, "N": 0, "total": 0}
+        for entry in result["entries"]:
+            value = (entry["value"] or "").strip()
+            if not value:
+                continue
+            counts["total"] += 1
+            code = value.upper()
+            if code in ("E", "M", "N"):
+                counts[code] += 1
+        return counts
+
     def print_one_result(result):
         print(f"{hospital_arg} — {result['date_column']} ({date_arg})  [{result['source_file']}]")
         for entry in result["entries"]:
             flag = "  [!]" if entry["misaligned"] else ""
             print(f"  {entry['label']:<10} {entry['value']!r}{flag}")
         print(f"  {'RATIO':<10} {result['ratio']!r}")
+        counts = count_metrics_one(result)
+        for metric in ("E", "M", "N", "total"):
+            print(f"  {metric:<10} {counts[metric]}")
         for w in result["warnings"]:
             print(f"[WARNING] {w}")
 
@@ -995,8 +1017,9 @@ if __name__ == "__main__":
             # text/paths, filtered down to one prompt's output.
             results = [hospital_date_column(hospital_arg, date_arg, config.TRANSCRIPTS_DIR, prompt_name=third_arg)]
         else:
-            # Recommended default: deterministic, directory-based xlsx lookup.
-            results = hospital_date_lookup(hospital_arg, date_arg)
+            # Default: DEFAULT_XLSX_PATH (xlsx/rota_transcripts.xlsx) — same
+            # as explicitly passing it as the third argument.
+            results = hospital_date_column_from_xlsx(hospital_arg, date_arg, DEFAULT_XLSX_PATH)
     except (ValueError, FileNotFoundError) as e:
         raise SystemExit(str(e))
 
@@ -1007,3 +1030,11 @@ if __name__ == "__main__":
         first = False
         print(f"=== {result['source_file']} ===")
         print_one_result(result)
+
+    # Count the total metrics across all results
+    totals = count_metrics_one(results)
+    print()
+    print("=== total ===")
+    print(f"{hospital_arg} — {results[0]['date_column']} ({date_arg})")
+    for metric in ("E", "M", "N", "total"):
+        print(f"  {metric:<10} {totals[metric]}")
