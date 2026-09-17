@@ -271,6 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("ground_truth", type=Path, help="Ground-truth workbook, e.g. ROTA_NBU_Nov_2024.xlsx")
     parser.add_argument("generated", type=Path, help="Generated workbook, e.g. rota_transcripts.xlsx")
     parser.add_argument("hospital", help="Hospital name to match in the ground-truth workbook's Hospital column, e.g. 'Kakamega'")
+    parser.add_argument("--prompt", default=None, help="Prompt file path, or bare name from prompts/ (e.g. 'base2'). Default: config.ACTIVE_PROMPT_FILE.")
     parser.add_argument("--from", dest="date_from", type=_parse_date_arg, default=None)
     parser.add_argument("--to", dest="date_to", type=_parse_date_arg, default=None)
     parser.add_argument("--gt-sheet", default=None, help="Ground-truth sheet name (default: first sheet)")

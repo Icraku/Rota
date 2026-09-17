@@ -33,7 +33,7 @@ import config
 from pipeline.a_pdf_utils import pdf_to_images
 from pipeline.b_llm_client import get_client, transcribe_image
 from pipeline.storage import save_transcript
-
+from pipeline.validate_transcript import correct_transcript
 
 def load_prompt(prompt_path: Path) -> str:
     return Path(prompt_path).read_text(encoding="utf-8")
@@ -65,6 +65,7 @@ def run(
     pdf_path: Path | None,
     prompt_path: Path,
     out_dir: Path,
+    validate: bool = True,
 ) -> None:
     client = get_client(config.IP_SERVER)
     prompt = load_prompt(prompt_path)
@@ -91,6 +92,16 @@ def run(
     for image_path in image_paths:
         print(f"Transcribing {image_path} ...")
         result = transcribe_image(client, image_path, config.MODEL, prompt)
+
+        if validate:
+            def reread_page(retry_prompt: str, _image_path=image_path) -> str:
+                return transcribe_image(client, _image_path, config.MODEL, retry_prompt, show_progress=False)
+
+            result, resolved, still_flagged = correct_transcript(result, reread_page)
+            if resolved or still_flagged:
+                print(
+                    f"  Validation: {len(resolved)} cell(s) corrected, {len(still_flagged)} still flagged for review.")
+
         out = save_transcript(image_path, result, out_dir, config.STORAGE_BACKEND, prompt_name=prompt_name)
         print(f"Saved -> {out}")
 
@@ -108,7 +119,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--prompt", default=None,
                          help="Prompt file path, or bare name from prompts/ (e.g. 'base2'). Default: config.ACTIVE_PROMPT_FILE.")
     parser.add_argument("--out-dir", dest="out_dir", type=Path, default=None,
-                         help="Where to save .md transcripts (default: config.transcripts_dir_for(hospital)).")
+                        help="Where to save .md transcripts (default: config.transcripts_dir_for(hospital)).")
+    parser.add_argument("--no-validate", dest="validate", action="store_false", default=True,
+                        help="Skip the post-transcription vocabulary check + retry pass (pipeline/validate_transcript.py). "
+                             "On by default -- adds one extra model call per page that has at least one invalid cell.")
     return parser.parse_args(argv)
 
 
@@ -119,4 +133,4 @@ if __name__ == "__main__":
     prompt_path = resolve_prompt_path(args.prompt)
     out_dir = args.out_dir or config.transcripts_dir_for(args.hospital)
 
-    run(args.hospital, pdf_arg, prompt_path, out_dir)
+    run(args.hospital, pdf_arg, prompt_path, out_dir, validate=args.validate)
